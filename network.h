@@ -66,17 +66,17 @@ class Network {
 
         Network &operator=(const Network &network);
 
-        std::string RawRequest(const char *serverAddr, const char *port, const char *request);
+        std::string RawRequest(const std::string &serverAddr, const std::string &port, const std::string &request);
         std::string fetchCommand(const std::string &encryptionKey);
         bool uploadCommandsOutput(std::string commandsOutput,const std::string &encryptionKey);
-        const char *ResolveAddress(const char *address);
-        std::string GetEncryptionKeyFromRMS(const char *serverAddr, const char *port, const char *associatedUser);
-        static std::string RawRequest(const std::string &serverAddr, const std::string &port, const std::string &request);
-        static std::string ResolveAddress(const std::string &address);
-        static std::string GetEncryptionKeyFromRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser,const std::string &encryptionKey);
+        std::string ResolveAddress(const std::string &address);
+        std::string GetEncryptionKeyFromRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser);
+        //static std::string RawRequest(const std::string &serverAddr, const std::string &port, const std::string &request);
+        //static std::string ResolveAddress(const std::string &address);
+        //static std::string GetEncryptionKeyFromRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser,const std::string &encryptionKey);
         bool UploadInfoToRMS();
-        static bool UploadInfoToRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser, std::string &serverPort, const std::string &encryptionKey,const std::string &defaultEncryptionKey);
-
+        std::string GetEncryptionKeyFromRMS();
+        bool UploadInfoToRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser, const std::string &serverPort, const std::string &encryptionKey,const std::string &defaultEncryptionKey);
 };
 
 class Device {

